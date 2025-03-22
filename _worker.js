@@ -1,7 +1,7 @@
 
 // 部署完成后在网址后面加上这个，获取自建节点和机场聚合节点，/?token=auto或/auto或
 
-let mytoken = 'auto';
+let mytoken = '';
 let guestToken = ''; //可以随便取，或者uuid生成，https://1024tools.com/uuid
 let BotToken = ''; //可以为空，或者@BotFather中输入/start，/newbot，并关注机器人
 let ChatID = ''; //可以为空，或者@userinfobot中获取，/start
@@ -21,7 +21,7 @@ https://raw.githubusercontent.com/mahdibland/SSAggregator/master/sub/airport_sub
 https://raw.githubusercontent.com/mahdibland/SSAggregator/master/sub/sub_merge.txt
 https://raw.githubusercontent.com/Pawdroid/Free-servers/refs/heads/main/sub
 `
-
+//"vless://f436e4bd-eaf1-4c88-95a0-68bdc4849974@172.64.231.104:443?encryption=none&security=tls&sni=fgfw666.jimage.site&fp=random&type=ws&host=fgfw666.jimage.site&path=%2F%3Fed%3D2560#MYCF#CF%E4%BC%98%E9%80%89"
 let urls = [];
 let subConverter = "SUBAPI.cmliussss.net"; //在线订阅转换后端，目前使用CM的订阅转换功能。支持自建psub 可自行搭建https://github.com/bulianglin/psub
 let subConfig = "https://raw.githubusercontent.com/cmliu/ACL4SSR/main/Clash/config/ACL4SSR_Online_MultiCountry.ini"; //订阅配置文件
@@ -88,10 +88,12 @@ export default {
 			let 自建节点 = "";
 			let 订阅链接 = "";
 			for (let x of 重新汇总所有链接) {
-				if (x.toLowerCase().startsWith('http')) {
-					订阅链接 += x + '\n';
+				// 获取完整的URL字符串(包含标签)
+				const fullUrl = x.label ? `${x.url}^${x.label}` : x.url;
+				if (x.url.toLowerCase().startsWith('http')) {
+					订阅链接 += fullUrl + '\n';
 				} else {
-					自建节点 += x + '\n';
+					自建节点 += fullUrl + '\n';
 				}
 			}
 			MainData = 自建节点;
@@ -230,11 +232,16 @@ export default {
 
 async function ADD(envadd) {
 	var addtext = envadd.replace(/[	"'|\r\n]+/g, ',').replace(/,+/g, ',');	// 将空格、双引号、单引号和换行符替换为逗号
-	//console.log(addtext);
 	if (addtext.charAt(0) == ',') addtext = addtext.slice(1);
 	if (addtext.charAt(addtext.length - 1) == ',') addtext = addtext.slice(0, addtext.length - 1);
-	const add = addtext.split(',');
-	//console.log(add);
+	const add = addtext.split(',').map(url => {
+		// 分离URL和标签
+		const [baseUrl, label] = url.split('^');
+		return {
+			url: baseUrl.trim(),
+			label: label ? label.trim() : ''
+		};
+	});
 	return add;
 }
 
@@ -379,80 +386,129 @@ async function proxyURL(proxyURL, url) {
 
 async function getSUB(api, request, 追加UA, userAgentHeader) {
 	if (!api || api.length === 0) {
-		return [];
-	} else api = [...new Set(api)]; // 去重
+		return [[], ""];
+	} else api = [...new Set(api.map(item => JSON.stringify(item)))].map(item => JSON.parse(item)); // 去重
+
 	let newapi = "";
 	let 订阅转换URLs = "";
 	let 异常订阅 = "";
-	const controller = new AbortController(); // 创建一个AbortController实例，用于取消请求
+	const controller = new AbortController();
 	const timeout = setTimeout(() => {
-		controller.abort(); // 2秒后取消所有请求
+		controller.abort();
 	}, 2000);
 
 	try {
-		// 使用Promise.allSettled等待所有API请求完成，无论成功或失败
-		const responses = await Promise.allSettled(api.map(apiUrl => getUrl(request, apiUrl, 追加UA, userAgentHeader).then(response => response.ok ? response.text() : Promise.reject(response))));
+		const responses = await Promise.allSettled(api.map(apiItem => 
+			getUrl(request, apiItem.url, 追加UA, userAgentHeader)
+				.then(response => response.ok ? response.text() : Promise.reject(response))
+		));
 
-		// 遍历所有响应
 		const modifiedResponses = responses.map((response, index) => {
-			// 检查是否请求成功
 			if (response.status === 'rejected') {
 				const reason = response.reason;
 				if (reason && reason.name === 'AbortError') {
 					return {
 						status: '超时',
 						value: null,
-						apiUrl: api[index] // 将原始的apiUrl添加到返回对象中
+						apiUrl: api[index].url,
+						label: api[index].label
 					};
 				}
-				console.error(`请求失败: ${api[index]}, 错误信息: ${reason.status} ${reason.statusText}`);
+				console.error(`请求失败: ${api[index].url}, 错误信息: ${reason.status} ${reason.statusText}`);
 				return {
 					status: '请求失败',
 					value: null,
-					apiUrl: api[index] // 将原始的apiUrl添加到返回对象中
+					apiUrl: api[index].url,
+					label: api[index].label
 				};
 			}
 			return {
 				status: response.status,
 				value: response.value,
-				apiUrl: api[index] // 将原始的apiUrl添加到返回对象中
+				apiUrl: api[index].url,
+				label: api[index].label
 			};
 		});
 
-		console.log(modifiedResponses); // 输出修改后的响应数组
+		console.log(modifiedResponses);
 
 		for (const response of modifiedResponses) {
-			// 检查响应状态是否为'fulfilled'
 			if (response.status === 'fulfilled') {
-				const content = await response.value || 'null'; // 获取响应的内容
+				const content = await response.value || 'null';
+				const label = response.label ? `[${response.label}]` : '';
+				
 				if (content.includes('proxies:')) {
-					//console.log('Clash订阅: ' + response.apiUrl);
-					订阅转换URLs += "|" + response.apiUrl; // Clash 配置
+					// 对于 Clash 配置，需要修改节点名称
+					let clashConfig = content;
+					if (label) {
+						clashConfig = content.replace(/name: (.*)/g, `name: ${label}$1`);
+					}
+					订阅转换URLs += "|" + response.apiUrl;
 				} else if (content.includes('outbounds"') && content.includes('inbounds"')) {
-					//console.log('Singbox订阅: ' + response.apiUrl);
-					订阅转换URLs += "|" + response.apiUrl; // Singbox 配置
+					订阅转换URLs += "|" + response.apiUrl;
 				} else if (content.includes('://')) {
-					//console.log('明文订阅: ' + response.apiUrl);
-					newapi += content + '\n'; // 追加内容
+					// 对于明文订阅，在每个节点名称前添加标签
+					if (label) {
+						const lines = content.split('\n');
+						const modifiedLines = lines.map(line => {
+							if (line.includes('://')) {
+								const hashIndex = line.lastIndexOf('#');
+								if (hashIndex !== -1) {
+									// 获取原始名称
+									const originalName = line.slice(hashIndex + 1);
+									// 添加带方括号的标签
+									return line.slice(0, hashIndex) + '#' + (label ? `${label}` : '') + originalName;
+								} else {
+									// 如果没有原始名称，使用标签+时间戳
+									const timestamp = Date.now().toString(36); // 将时间戳转换为36进制以缩短长度
+									return line + '#' + (label ? `${label}` : '') + timestamp;``
+								}
+							}
+						});
+						newapi += modifiedLines.join('\n') + '\n';
+					} else {
+						newapi += content + '\n';
+					}
 				} else if (isValidBase64(content)) {
-					//console.log('Base64订阅: ' + response.apiUrl);
-					newapi += base64Decode(content) + '\n'; // 解码并追加内容
+					const decodedContent = base64Decode(content);
+					if (label) {
+						const lines = decodedContent.split('\n');
+						const modifiedLines = lines.map(line => {
+							if (line.includes('://')) {
+								const hashIndex = line.lastIndexOf('#');
+								if (hashIndex !== -1) {
+									// 获取原始名称
+									const originalName = line.slice(hashIndex + 1);
+									// 添加带方括号的标签
+									const newLine = line.slice(0, hashIndex) + '#' + (label ? `${label}` : '') + originalName;
+									return newLine;
+								} else {
+									// 如果没有原始名称，使用标签+时间戳
+									const timestamp = Date.now().toString(36); // 将时间戳转换为36进制以缩短长度
+									return line + '#' + (label ? `${label}` : '') + timestamp;``
+								}
+							}
+							return line;
+						});
+						newapi += modifiedLines.join('\n') + '\n';
+					} else {
+						newapi += decodedContent + '\n';
+					}
 				} else {
-					const 异常订阅LINK = `trojan://CMLiussss@127.0.0.1:8888?security=tls&allowInsecure=1&type=tcp&headerType=none#%E5%BC%82%E5%B8%B8%E8%AE%A2%E9%98%85%20${response.apiUrl.split('://')[1].split('/')[0]}`;
+					const 异常订阅LINK = `trojan://CMLiussss@127.0.0.1:8888?security=tls&allowInsecure=1&type=tcp&headerType=none#${label}异常订阅 ${response.apiUrl.split('://')[1].split('/')[0]}`;
 					console.log('异常订阅: ' + 异常订阅LINK);
 					异常订阅 += `${异常订阅LINK}\n`;
 				}
 			}
 		}
 	} catch (error) {
-		console.error(error); // 捕获并输出错误信息
+		console.error(error);
 	} finally {
-		clearTimeout(timeout); // 清除定时器
+		clearTimeout(timeout);
 	}
 
-	const 订阅内容 = await ADD(newapi + 异常订阅); // 将处理后的内容转换为数组
-	// 返回处理后的结果
-	return [订阅内容, 订阅转换URLs];
+	const 订阅内容 = await ADD(newapi + 异常订阅);
+	return [订阅内容.map(item => item.url), 订阅转换URLs];
 }
 
 async function getUrl(request, targetUrl, 追加UA, userAgentHeader) {
